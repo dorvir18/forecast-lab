@@ -1,5 +1,4 @@
-
-# api_v2.py
+# api_v2.py — FastAPI backend (multi-method + MAPE + ensemble) with CORS for demandplanningcourse.com
 import io, base64
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, Form
@@ -9,9 +8,14 @@ from arima_core_v2 import read_input_df, run_all_methods_for_group, REQUIRED_COL
 
 app = FastAPI(title="ARIMA/SARIMA API v2 — multi-method + MAPE + ensemble")
 
+# CORS: allow your site origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # замените на ваши домены Тильды/сайта в проде
+    allow_origins=[
+        "https://demandplanningcourse.com",
+        "https://www.demandplanningcourse.com",
+        # add Tilda preview domain if needed, e.g. "https://*.tilda.ws"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,19 +61,15 @@ async def forecast(file: UploadFile = File(...),
 
     res = run_all_methods_for_group(g, horizon=int(horizon))
 
-    # Build rich Excel
+    # Build Excel (all outputs)
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         g.to_excel(writer, index=False, sheet_name="Original")
         res["cleaned_df"].to_excel(writer, index=False, sheet_name="Cleaned")
-        # final
         res["final_df"].to_excel(writer, index=False, sheet_name="Forecast_Final")
-        # each method
         for m, dfm in res["methods"].items():
             dfm.to_excel(writer, index=False, sheet_name=f"Forecast_{m[:28]}")
-        # summary & analysis
         res["summary"].to_excel(writer, index=False, sheet_name="Methods_Summary")
-        # analysis sheet
         analysis_df = pd.DataFrame([{
             "Account": account,
             "Product": product,
@@ -90,7 +90,7 @@ async def forecast(file: UploadFile = File(...),
     buf.seek(0)
     excel_b64 = base64.b64encode(buf.read()).decode("utf-8")
 
-    # Convert data to JSON-friendly structures
+    # JSON payload for frontend
     history = [{"date": d.strftime("%Y-%m-%d"), "value": float(v) if pd.notna(v) else None}
                for d,v in zip(g["Date"], g["Actual"])]
     cleaned = [{"date": d.strftime("%Y-%m-%d"), "value": float(v) if pd.notna(v) else None}
@@ -103,7 +103,6 @@ async def forecast(file: UploadFile = File(...),
         all_methods[name] = [{"date": d.strftime("%Y-%m-%d"), "value": float(v) if pd.notna(v) else None}
                              for d,v in zip(dfm["Date"], dfm["Forecast"])]
 
-    # Metrics table
     summary = res["summary"].fillna("").to_dict(orient="records")
 
     return {
